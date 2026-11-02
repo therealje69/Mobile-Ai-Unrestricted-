@@ -9,6 +9,10 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.example.R
+import com.example.data.ai.AiArchitectUiState
+import com.example.data.ai.AiStreamUiState
+import com.example.data.ai.GeminiSovereignService
+import com.example.data.ai.SynthesizedPersonaBlueprint
 import com.example.data.firestore.DeployedModelDoc
 import com.example.data.firestore.FirestoreModelRepository
 import com.example.data.local.CloudDeploymentEntity
@@ -21,8 +25,10 @@ import com.example.data.remote.PrivateCloudInferenceClient
 import com.example.voice.DuplexVoiceController
 import com.example.voice.DuplexVoiceState
 import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -32,11 +38,15 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
+
+private const val TAG = "SovereignVM"
 
 enum class SovereignTab {
     DUPLEX_LIVE,
@@ -55,6 +65,7 @@ class SovereignVoiceViewModel(
     private val database = SovereignDatabase.getInstance(application)
     private val repository = SovereignRepository(database.sovereignDao())
     private val inferenceClient = PrivateCloudInferenceClient()
+    private val geminiService = GeminiSovereignService()
 
     private var activeInferenceJob: Job? = null
     private var lastAssistantMessageId: Long? = null
@@ -82,10 +93,20 @@ class SovereignVoiceViewModel(
     private val _bannerNotification = MutableStateFlow<String?>(null)
     val bannerNotification: StateFlow<String?> = _bannerNotification.asStateFlow()
 
+    // Firebase AI Logic (Gemini 3.8 Flash) live streaming & structured architect states
+    private val _useGeminiLiveBridge = MutableStateFlow(true)
+    val useGeminiLiveBridge: StateFlow<Boolean> = _useGeminiLiveBridge.asStateFlow()
+
+    private val _aiStreamState = MutableStateFlow<AiStreamUiState>(AiStreamUiState.Idle)
+    val aiStreamState: StateFlow<AiStreamUiState> = _aiStreamState.asStateFlow()
+
+    private val _aiArchitectState = MutableStateFlow<AiArchitectUiState>(AiArchitectUiState.Idle)
+    val aiArchitectState: StateFlow<AiArchitectUiState> = _aiArchitectState.asStateFlow()
+
     // Cloud-synced Deployed Models from Firestore (scoped to authenticated user)
     val deployedModels: StateFlow<List<DeployedModelDoc>> = firestoreRepository.observeDeployedModels()
         .catch { error ->
-            Log.w("SovereignVM", "Error observing deployed models from Firestore", error)
+            Log.w(TAG, "Error observing deployed models from Firestore", error)
             _bannerNotification.value = error.localizedMessage ?: "Failed to sync deployed models"
             emit(emptyList())
         }
@@ -143,6 +164,22 @@ class SovereignVoiceViewModel(
         _bannerNotification.value = message
     }
 
+    fun toggleGeminiLiveBridge() {
+        val next = !_useGeminiLiveBridge.value
+        _useGeminiLiveBridge.value = next
+        _aiStreamState.value = AiStreamUiState.Idle
+        showNotification(
+            if (next) "Switched to Gemini 3.8 Flash Live Streaming Bridge (Firebase AI Logic)"
+            else "Switched to Direct Private Serverless HTTP Endpoint"
+        )
+    }
+
+    fun clearAiStreamError() {
+        if (_aiStreamState.value is AiStreamUiState.Error) {
+            _aiStreamState.value = AiStreamUiState.Idle
+        }
+    }
+
     fun getActiveDeploymentAsEntity(): CloudDeploymentEntity {
         val activeDoc = deployedModels.value.firstOrNull { it.isSelected }
             ?: deployedModels.value.firstOrNull()
@@ -198,11 +235,13 @@ class SovereignVoiceViewModel(
 
     fun triggerManualBargeIn(newVoicePrompt: String? = null) {
         activeInferenceJob?.cancel()
+        _aiStreamState.value = AiStreamUiState.Idle
         voiceController.triggerBargeInInterruption(newVoicePrompt)
     }
 
     private fun handleBargeInStateMutation() {
         activeInferenceJob?.cancel()
+        _aiStreamState.value = AiStreamUiState.Idle
         viewModelScope.launch {
             val msgId = lastAssistantMessageId ?: return@launch
             val currentMsgs = activeMessages.value
@@ -244,46 +283,188 @@ class SovereignVoiceViewModel(
                     role = "user",
                     content = cleanText,
                     abliterationWeightUsed = persona.abliterationStrength,
-                    endpointProtocol = deployment.provider
+                    endpointProtocol = if (_useGeminiLiveBridge.value) "GEMINI_3_8_FLASH" else deployment.provider
                 )
             )
 
-            val result = inferenceClient.generateDuplexReply(
+            _lastRawPayloadPreview.value = inferenceClient.buildRequestJson(
                 deployment = deployment,
                 persona = persona,
                 history = historySnapshot,
                 userPrompt = cleanText
-            )
+            ).toString(2)
 
-            _lastRawPayloadPreview.value = result.rawPayloadPreview
-
-            val assistantMsgId = repository.insertMessage(
-                SessionMessageEntity(
+            if (_useGeminiLiveBridge.value) {
+                streamWithGeminiAiLogic(
                     sessionId = sessionId,
-                    role = "assistant",
-                    content = result.replyText,
-                    latencyMs = result.latencyMs,
-                    tokensPerSec = result.tokensPerSec,
-                    abliterationWeightUsed = persona.abliterationStrength,
-                    endpointProtocol = deployment.provider
+                    deployment = deployment,
+                    persona = persona,
+                    history = historySnapshot,
+                    userPrompt = cleanText
                 )
-            )
-            lastAssistantMessageId = assistantMsgId
+            } else {
+                val result = inferenceClient.generateDuplexReply(
+                    deployment = deployment,
+                    persona = persona,
+                    history = historySnapshot,
+                    userPrompt = cleanText
+                )
 
-            val currentSession = sessions.value.firstOrNull { it.id == sessionId }
-            if (currentSession != null) {
-                repository.updateSession(
-                    currentSession.copy(
-                        updatedAt = System.currentTimeMillis(),
-                        turnCount = currentSession.turnCount + 2,
-                        deploymentName = deployment.name,
-                        personaName = persona.name
+                val assistantMsgId = repository.insertMessage(
+                    SessionMessageEntity(
+                        sessionId = sessionId,
+                        role = "assistant",
+                        content = result.replyText,
+                        latencyMs = result.latencyMs,
+                        tokensPerSec = result.tokensPerSec,
+                        abliterationWeightUsed = persona.abliterationStrength,
+                        endpointProtocol = deployment.provider
                     )
                 )
+                lastAssistantMessageId = assistantMsgId
+                updateSessionMetadata(sessionId, deployment, persona)
+                voiceController.speakModelResponse(result.replyText)
+            }
+        }
+    }
+
+    private suspend fun streamWithGeminiAiLogic(
+        sessionId: Long,
+        deployment: CloudDeploymentEntity,
+        persona: PersonaProfileEntity,
+        history: List<SessionMessageEntity>,
+        userPrompt: String
+    ) {
+        _aiStreamState.value = AiStreamUiState.Loading
+        val startMs = System.currentTimeMillis()
+        val accumulatedText = StringBuilder()
+
+        try {
+            // Mandated: realistic 30-60s timeout window for Firebase AI Logic model inference
+            withTimeout(60_000L) {
+                geminiService.streamDuplexConversationTurn(
+                    deployment = deployment,
+                    persona = persona,
+                    history = history,
+                    userPrompt = userPrompt
+                ).collect { chunkText ->
+                    if (chunkText.isNotEmpty()) {
+                        accumulatedText.append(chunkText)
+                        _aiStreamState.value = AiStreamUiState.Streaming(accumulatedText.toString())
+                    }
+                }
             }
 
-            voiceController.speakModelResponse(result.replyText)
+            val finalReply = accumulatedText.toString().trim()
+            if (finalReply.isNotBlank()) {
+                val elapsedMs = (System.currentTimeMillis() - startMs).coerceAtLeast(60L)
+                val approxTokens = (finalReply.split(Regex("\\s+")).size * 1.35f).coerceAtLeast(6f)
+                val tps = ((approxTokens / (elapsedMs / 1000f)) * 10).roundToInt() / 10f
+
+                _aiStreamState.value = AiStreamUiState.Success(
+                    fullText = finalReply,
+                    latencyMs = elapsedMs,
+                    tokensPerSec = tps
+                )
+
+                val assistantMsgId = repository.insertMessage(
+                    SessionMessageEntity(
+                        sessionId = sessionId,
+                        role = "assistant",
+                        content = finalReply,
+                        latencyMs = elapsedMs,
+                        tokensPerSec = tps,
+                        abliterationWeightUsed = persona.abliterationStrength,
+                        endpointProtocol = "GEMINI_3.8_FLASH"
+                    )
+                )
+                lastAssistantMessageId = assistantMsgId
+                updateSessionMetadata(sessionId, deployment, persona)
+                voiceController.speakModelResponse(finalReply)
+            } else {
+                val emptyErr = "Gemini 3.8 Flash returned an empty response."
+                _aiStreamState.value = AiStreamUiState.Error(emptyErr)
+            }
+        } catch (e: TimeoutCancellationException) {
+            Log.e(TAG, "Gemini streaming generation timed out", e)
+            _aiStreamState.value = AiStreamUiState.Error(
+                "Gemini 3.8 Flash streaming timed out after 60 seconds. Please try again."
+            )
+        } catch (e: CancellationException) {
+            // ALWAYS re-throw CancellationException to preserve cooperative coroutine cancellation
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "Firebase AI Logic streaming generation failed", e)
+            val errMsg = e.localizedMessage ?: "Firebase AI Logic generation failed."
+            _aiStreamState.value = AiStreamUiState.Error(errMsg)
         }
+    }
+
+    private suspend fun updateSessionMetadata(
+        sessionId: Long,
+        deployment: CloudDeploymentEntity,
+        persona: PersonaProfileEntity
+    ) {
+        val currentSession = sessions.value.firstOrNull { it.id == sessionId }
+        if (currentSession != null) {
+            repository.updateSession(
+                currentSession.copy(
+                    updatedAt = System.currentTimeMillis(),
+                    turnCount = currentSession.turnCount + 2,
+                    deploymentName = deployment.name,
+                    personaName = persona.name
+                )
+            )
+        }
+    }
+
+    // Structured JSON Output via Firebase AI Logic (Schema.obj) for Persona & Weight Synthesis
+    fun synthesizePersonaWithGemini(objectivePrompt: String) {
+        val cleanPrompt = objectivePrompt.trim()
+        if (cleanPrompt.isEmpty()) {
+            _aiArchitectState.value = AiArchitectUiState.Error("Please describe the target persona or weight profile first.")
+            return
+        }
+
+        viewModelScope.launch {
+            _aiArchitectState.value = AiArchitectUiState.Loading
+            try {
+                val blueprint = withTimeout(60_000L) {
+                    geminiService.synthesizePersonaBlueprint(cleanPrompt)
+                }
+                _aiArchitectState.value = AiArchitectUiState.Success(blueprint)
+            } catch (e: TimeoutCancellationException) {
+                Log.e(TAG, "Gemini persona synthesis timed out", e)
+                _aiArchitectState.value = AiArchitectUiState.Error(
+                    "Persona synthesis timed out after 60 seconds. Please try again."
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to synthesize persona JSON with Gemini", e)
+                _aiArchitectState.value = AiArchitectUiState.Error(
+                    e.localizedMessage ?: "Failed to synthesize persona profile."
+                )
+            }
+        }
+    }
+
+    fun applySynthesizedBlueprint(blueprint: SynthesizedPersonaBlueprint) {
+        createNewPersona(
+            name = blueprint.personaName,
+            roleTag = blueprint.roleTag,
+            systemPrompt = blueprint.systemPrompt,
+            abliterationStrength = blueprint.abliterationStrength,
+            loraScale = blueprint.loraAdapterScale,
+            temperature = blueprint.temperature,
+            voicePitch = 1.0f,
+            voiceRate = 1.1f
+        )
+        _aiArchitectState.value = AiArchitectUiState.Idle
+    }
+
+    fun dismissArchitectResult() {
+        _aiArchitectState.value = AiArchitectUiState.Idle
     }
 
     // Firestore-Backed Model Management Dashboard Operations

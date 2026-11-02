@@ -62,6 +62,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.data.ai.configureAppCheck
 import com.example.ui.SovereignTab
 import com.example.ui.SovereignVoiceViewModel
 import com.example.ui.auth.AuthScreen
@@ -87,6 +88,10 @@ import com.google.firebase.auth.auth
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // STEP 1: Configure App Check with launch intent before any UI, ViewModels, or Firebase operations
+        configureAppCheck(this, intent)
+
         enableEdgeToEdge()
         setContent {
             MyApplicationTheme {
@@ -161,6 +166,9 @@ fun SovereignVoiceApp(
     val statusTelemetry by viewModel.statusTelemetry.collectAsStateWithLifecycle()
     val lastRawPayload by viewModel.lastRawPayloadPreview.collectAsStateWithLifecycle()
     val bannerNotification by viewModel.bannerNotification.collectAsStateWithLifecycle()
+    val useGeminiLiveBridge by viewModel.useGeminiLiveBridge.collectAsStateWithLifecycle()
+    val aiStreamState by viewModel.aiStreamState.collectAsStateWithLifecycle()
+    val aiArchitectState by viewModel.aiArchitectState.collectAsStateWithLifecycle()
 
     val activeDeploymentEntity = remember(deployedModels) {
         viewModel.getActiveDeploymentAsEntity()
@@ -235,7 +243,7 @@ fun SovereignVoiceApp(
                                     color = TextPrimary
                                 )
                                 Text(
-                                    text = "PRIVATE ABLITERATED / WEIGHTED DUPLEX CONSOLE",
+                                    text = "GEMINI 3.8 FLASH & PRIVATE ABLITERATED DUPLEX",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = AmberPulse
                                 )
@@ -250,7 +258,7 @@ fun SovereignVoiceApp(
                             modifier = Modifier.padding(end = 4.dp)
                         ) {
                             Text(
-                                text = if (isHandsFreeActive) "VAD LIVE" else "DIRECT RAW",
+                                text = if (isHandsFreeActive) "VAD LIVE" else if (useGeminiLiveBridge) "GEMINI 3.8" else "DIRECT RAW",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = if (isHandsFreeActive) EmeraldSignal else ElectricCyan,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -397,6 +405,10 @@ fun SovereignVoiceApp(
                                 livePartialTranscript = livePartialTranscript,
                                 statusTelemetry = statusTelemetry,
                                 lastRawPayloadPreview = lastRawPayload,
+                                useGeminiLiveBridge = useGeminiLiveBridge,
+                                aiStreamState = aiStreamState,
+                                onToggleGeminiLiveBridge = { viewModel.toggleGeminiLiveBridge() },
+                                onClearAiStreamError = { viewModel.clearAiStreamError() },
                                 onToggleHandsFreeDuplex = { viewModel.toggleHandsFreeDuplex() },
                                 onTriggerBargeIn = { prompt -> viewModel.triggerManualBargeIn(prompt) },
                                 onSendTurn = { text, isVoice -> viewModel.sendDuplexTurn(text, isVoice) },
@@ -427,6 +439,10 @@ fun SovereignVoiceApp(
                             SovereignTab.WEIGHT_STUDIO -> WeightTuningStudioScreen(
                                 personas = personas,
                                 activePersona = activePersona,
+                                aiArchitectState = aiArchitectState,
+                                onSynthesizePersonaWithGemini = { viewModel.synthesizePersonaWithGemini(it) },
+                                onApplySynthesizedBlueprint = { viewModel.applySynthesizedBlueprint(it) },
+                                onDismissArchitectResult = { viewModel.dismissArchitectResult() },
                                 onSelectPersona = { viewModel.selectPersona(it) },
                                 onUpdatePersona = { viewModel.updateActivePersonaParameters(it) },
                                 onApplyQuickPreset = { viewModel.applyQuickWeightPreset(it) },

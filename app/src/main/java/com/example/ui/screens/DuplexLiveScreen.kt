@@ -11,7 +11,6 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -36,14 +35,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AddCircleOutline
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.PanTool
 import androidx.compose.material.icons.filled.RecordVoiceOver
-import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -52,11 +51,11 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -83,6 +82,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.example.data.ai.AiStreamUiState
 import com.example.data.local.CloudDeploymentEntity
 import com.example.data.local.PersonaProfileEntity
 import com.example.data.local.SessionMessageEntity
@@ -111,6 +111,10 @@ fun DuplexLiveScreen(
     livePartialTranscript: String,
     statusTelemetry: String,
     lastRawPayloadPreview: String,
+    useGeminiLiveBridge: Boolean,
+    aiStreamState: AiStreamUiState,
+    onToggleGeminiLiveBridge: () -> Unit,
+    onClearAiStreamError: () -> Unit,
     onToggleHandsFreeDuplex: () -> Unit,
     onTriggerBargeIn: (String?) -> Unit,
     onSendTurn: (String, Boolean) -> Unit,
@@ -134,7 +138,7 @@ fun DuplexLiveScreen(
         }
     }
 
-    LaunchedEffect(messages.size) {
+    LaunchedEffect(messages.size, aiStreamState) {
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.size - 1)
         }
@@ -164,11 +168,56 @@ fun DuplexLiveScreen(
             ActiveNodeTelemetryBanner(
                 deployment = activeDeployment,
                 persona = activePersona,
+                useGeminiLiveBridge = useGeminiLiveBridge,
+                onToggleGeminiLiveBridge = onToggleGeminiLiveBridge,
                 onInspectPayload = { showRawPayloadDialog = true },
                 onNewSession = onStartFreshSession
             )
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Transparent Error Propagation Banner for Firebase AI Logic
+            AnimatedVisibility(visible = aiStreamState is AiStreamUiState.Error) {
+                val errMsg = (aiStreamState as? AiStreamUiState.Error)?.message.orEmpty()
+                Surface(
+                    color = CrimsonNeon.copy(alpha = 0.14f),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, CrimsonNeon.copy(alpha = 0.65f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp)
+                        .testTag("gemini_stream_error_banner")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ErrorOutline,
+                                contentDescription = "AI Error",
+                                tint = CrimsonNeon,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text(
+                                text = errMsg,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = CrimsonNeon
+                            )
+                        }
+                        TextButton(onClick = onClearAiStreamError) {
+                            Text("Dismiss", color = TextPrimary)
+                        }
+                    }
+                }
+            }
 
             // Central Full-Duplex Acoustic Orb & 24-Band Frequency Visualizer
             DuplexAcousticVisualizerCard(
@@ -197,7 +246,7 @@ fun DuplexLiveScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Quick Simulated Voice Utterance Chips (ideal for testing hands-free voice turns & barge-in in emulator)
+            // Quick Simulated Voice Utterance Chips
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -262,6 +311,75 @@ fun DuplexLiveScreen(
                         message = msg,
                         onReplayAudio = { onReplayVoice(msg.content) }
                     )
+                }
+
+                // Real-time Gemini 3.8 Flash Streaming Token Indicator
+                when (aiStreamState) {
+                    is AiStreamUiState.Loading -> {
+                        item(key = "gemini_loading_indicator") {
+                            Surface(
+                                color = ObsidianSurface,
+                                shape = RoundedCornerShape(14.dp),
+                                border = BorderStroke(1.dp, AmberPulse.copy(alpha = 0.5f)),
+                                modifier = Modifier.widthIn(max = 560.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    CircularProgressIndicator(
+                                        color = AmberPulse,
+                                        strokeWidth = 2.dp,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        text = "GEMINI 3.8 FLASH • Opening live duplex token stream...",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = AmberPulse
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    is AiStreamUiState.Streaming -> {
+                        item(key = "gemini_streaming_bubble") {
+                            Surface(
+                                color = ObsidianSurface,
+                                shape = RoundedCornerShape(14.dp),
+                                border = BorderStroke(1.dp, ElectricCyan.copy(alpha = 0.65f)),
+                                modifier = Modifier.widthIn(max = 560.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.AutoAwesome,
+                                            contentDescription = null,
+                                            tint = ElectricCyan,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Text(
+                                            text = "GEMINI 3.8 FLASH • STREAMING LIVE TOKENS",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = ElectricCyan
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = aiStreamState.partialText,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = TextPrimary
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    else -> Unit
                 }
             }
 
@@ -383,6 +501,8 @@ fun DuplexLiveScreen(
 private fun ActiveNodeTelemetryBanner(
     deployment: CloudDeploymentEntity?,
     persona: PersonaProfileEntity?,
+    useGeminiLiveBridge: Boolean,
+    onToggleGeminiLiveBridge: () -> Unit,
     onInspectPayload: () -> Unit,
     onNewSession: () -> Unit
 ) {
@@ -420,14 +540,29 @@ private fun ActiveNodeTelemetryBanner(
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "${deployment?.provider ?: "RUNPOD"} • ${deployment?.quantization ?: "EXL2"} • ${deployment?.avgLatencyMs ?: 220}ms",
+                            text = if (useGeminiLiveBridge)
+                                "GEMINI 3.8 FLASH STREAM • ${deployment?.quantization ?: "EXL2"} WEIGHT BRIDGE"
+                            else
+                                "${deployment?.provider ?: "RUNPOD"} • ${deployment?.quantization ?: "EXL2"} • ${deployment?.avgLatencyMs ?: 220}ms",
                             style = MaterialTheme.typography.labelSmall,
-                            color = TextSecondary
+                            color = if (useGeminiLiveBridge) ElectricCyan else TextSecondary
                         )
                     }
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    IconButton(
+                        onClick = onToggleGeminiLiveBridge,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("toggle_gemini_bridge_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome,
+                            contentDescription = "Toggle Gemini 3.8 Flash Live Bridge",
+                            tint = if (useGeminiLiveBridge) ElectricCyan else TextSecondary
+                        )
+                    }
                     IconButton(
                         onClick = onInspectPayload,
                         modifier = Modifier
@@ -458,10 +593,16 @@ private fun ActiveNodeTelemetryBanner(
             Spacer(modifier = Modifier.height(6.dp))
 
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                TelemetryPill(
+                    label = if (useGeminiLiveBridge) "GEMINI 3.8 FLASH" else "DIRECT HTTP",
+                    color = if (useGeminiLiveBridge) ElectricCyan else AmberPulse
+                )
                 TelemetryPill(
                     label = persona?.name?.substringBefore(" —") ?: "Aether",
                     color = ElectricCyan
@@ -556,7 +697,7 @@ private fun DuplexAcousticVisualizerCard(
                         text = when (voiceState) {
                             DuplexVoiceState.IDLE -> "2-WAY DUPLEX READY"
                             DuplexVoiceState.LISTENING_VAD -> "REAL-TIME VAD LISTENING"
-                            DuplexVoiceState.THINKING_INFERENCE -> "ABLITERATED STREAM INFERENCE"
+                            DuplexVoiceState.THINKING_INFERENCE -> "GEMINI / ABLITERATED STREAM INFERENCE"
                             DuplexVoiceState.SPEAKING_DUPLEX -> "FULL-DUPLEX SPEAKING (INTERRUPTIBLE)"
                             DuplexVoiceState.INTERRUPTED_BARGE_IN -> "BARGE-IN INTERRUPT TRIGGERED"
                         },
@@ -767,7 +908,7 @@ private fun DuplexTurnBubble(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = if (isUser) "YOU • DUPLEX MIC" else "SOVEREIGN NODE • ${message.endpointProtocol.substringBefore('_')}",
+                        text = if (isUser) "YOU • DUPLEX MIC" else "SOVEREIGN NODE • ${message.endpointProtocol}",
                         style = MaterialTheme.typography.labelSmall,
                         color = if (isUser) ElectricCyan else AmberPulse
                     )
