@@ -1,0 +1,88 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidDeployedModel(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+             data.provider is string && data.provider in ['RUNPOD_SERVERLESS', 'HUGGINGFACE_ENDPOINT'] &&
+             data.endpointUrl is string && data.endpointUrl.size() >= 1 && data.endpointUrl.size() <= 350 &&
+             data.modelRepoId is string && data.modelRepoId.size() >= 1 && data.modelRepoId.size() <= 220 &&
+             data.gpuTier is string && data.gpuTier.size() >= 1 && data.gpuTier.size() <= 120 &&
+             data.quantization is string && data.quantization.size() >= 1 && data.quantization.size() <= 120 &&
+             data.weightMode is string && data.weightMode in ['ORTHOGONAL_ABLITERATED', 'CUSTOM_LORA_WEIGHTED', 'RAW_FOUNDATION_MERGE'] &&
+             data.abliterationLayerRange is string && data.abliterationLayerRange.size() >= 1 && data.abliterationLayerRange.size() <= 250 &&
+             data.status is string && data.status in ['RUNNING', 'STOPPED', 'WARMING_UP', 'SCALING'] &&
+             data.activeWorkers is int && data.activeWorkers >= 0 && data.activeWorkers <= 64 &&
+             data.maxWorkers is int && data.maxWorkers >= 1 && data.maxWorkers <= 64 &&
+             data.avgLatencyMs is int && data.avgLatencyMs >= 0 && data.avgLatencyMs <= 60000 &&
+             data.vramUsedGb is int && data.vramUsedGb >= 0 && data.vramUsedGb <= 2048 &&
+             data.vramTotalGb is int && data.vramTotalGb >= 1 && data.vramTotalGb <= 2048 &&
+             data.gpuUtilizationPercent is int && data.gpuUtilizationPercent >= 0 && data.gpuUtilizationPercent <= 100 &&
+             data.requestsPerMin is int && data.requestsPerMin >= 0 && data.requestsPerMin <= 100000 &&
+             data.isSelected is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    match /users/{userId}/deployed_models/{modelId} {
+      allow get: if isSignedIn() && request.auth.uid == userId && isValidId(modelId);
+      allow list: if isSignedIn() && request.auth.uid == userId;
+
+      allow create: if isSignedIn() &&
+                       request.auth.uid == userId &&
+                       isValidId(modelId) &&
+                       incoming().keys().hasAll([
+                         'userId', 'name', 'provider', 'endpointUrl', 'modelRepoId',
+                         'gpuTier', 'quantization', 'weightMode', 'abliterationLayerRange',
+                         'status', 'activeWorkers', 'maxWorkers', 'avgLatencyMs',
+                         'vramUsedGb', 'vramTotalGb', 'gpuUtilizationPercent',
+                         'requestsPerMin', 'isSelected', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'name', 'provider', 'endpointUrl', 'modelRepoId',
+                         'gpuTier', 'quantization', 'weightMode', 'abliterationLayerRange',
+                         'status', 'activeWorkers', 'maxWorkers', 'avgLatencyMs',
+                         'vramUsedGb', 'vramTotalGb', 'gpuUtilizationPercent',
+                         'requestsPerMin', 'isSelected', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidDeployedModel(incoming());
+
+      allow update: if isSignedIn() &&
+                       request.auth.uid == userId &&
+                       isValidId(modelId) &&
+                       isValidDeployedModel(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'name', 'provider', 'endpointUrl', 'modelRepoId',
+                         'gpuTier', 'quantization', 'weightMode', 'abliterationLayerRange',
+                         'status', 'activeWorkers', 'maxWorkers', 'avgLatencyMs',
+                         'vramUsedGb', 'vramTotalGb', 'gpuUtilizationPercent',
+                         'requestsPerMin', 'isSelected', 'updatedAt'
+                       ]);
+
+      allow delete: if isSignedIn() && request.auth.uid == userId && isValidId(modelId);
+    }
+  }
+}

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="400dp"
+    android:height="180dp"
+    android:viewportWidth="400"
+    android:viewportHeight="180">
+    <path android:pathData="M0,0h400v180h-400z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="0"
+                android:startY="0"
+                android:endX="400"
+                android:endY="180"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#0D131F" />
+                <item android:offset="0.5" android:color="#131D31" />
+                <item android:offset="1.0" android:color="#0A0E17" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- Grid telemetry lines -->
+    <path
+        android:strokeColor="#1E293B"
+        android:strokeWidth="1"
+        android:pathData="M0,45 L400,45 M0,90 L400,90 M0,135 L400,135 M80,0 L80,180 M160,0 L160,180 M240,0 L240,180 M320,0 L320,180" />
+    <!-- Neural wave paths -->
+    <path
+        android:strokeColor="#00F0FF"
+        android:strokeWidth="2.5"
+        android:pathData="M0,90 Q50,30 100,90 T200,90 T300,90 T400,90" />
+    <path
+        android:strokeColor="#FFB800"
+        android:strokeWidth="2"
+        android:pathData="M0,90 Q50,140 100,90 T200,90 T300,90 T400,90" />
+    <!-- Center core nodes -->
+    <path
+        android:fillColor="#00F0FF"
+        android:pathData="M200,90m-18,0a18,18 0,1 1,36 0a18,18 0,1 1,-36 0" />
+    <path
+        android:fillColor="#0A0D12"
+        android:pathData="M200,90m-10,0a10,10 0,1 1,20 0a10,10 0,1 1,-20 0" />
+    <path
+        android:fillColor="#FFB800"
+        android:pathData="M200,90m-5,0a5,5 0,1 1,10 0a5,5 0,1 1,-10 0" />
+</vector>

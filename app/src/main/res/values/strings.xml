@@ -1,0 +1,12 @@
+<resources>
+    <string name="app_name">SovereignVoice</string>
+    <string name="nav_duplex">Live Duplex</string>
+    <string name="nav_deployments">Cloud Nodes</string>
+    <string name="nav_tuning">Weight Studio</string>
+    <string name="nav_vault">Session Vault</string>
+    <string name="start_duplex_voice">Start Live Duplex</string>
+    <string name="stop_duplex_voice">End Duplex Session</string>
+    <string name="barge_in_interrupt">Interrupt (Barge-In)</string>
+    <string name="deploy_new_node">Deploy Private Node</string>
+    <string name="export_session_logs">Export Session Log</string>
+</resources>

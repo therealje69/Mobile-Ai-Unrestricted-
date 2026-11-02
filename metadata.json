@@ -1,0 +1,10 @@
+{
+  "name": "SovereignVoice",
+  "description": "Deploy and manage private cloud-hosted uncensored, weighted, and abliterated LLM instances on RunPod and HuggingFace with real-time VAD and interruptible full-duplex live voice conversations.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

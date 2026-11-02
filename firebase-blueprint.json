@@ -1,0 +1,126 @@
+{
+  "entities": {
+    "DeployedModel": {
+      "title": "DeployedModel",
+      "description": "Represents a private cloud-hosted uncensored, weighted, or abliterated LLM instance managed in the Model Management Dashboard.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The authenticated Firebase UID of the model owner."
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name of the deployed model instance."
+        },
+        "provider": {
+          "type": "string",
+          "enum": ["RUNPOD_SERVERLESS", "HUGGINGFACE_ENDPOINT"],
+          "description": "Cloud compute provider hosting the model."
+        },
+        "endpointUrl": {
+          "type": "string",
+          "description": "Private REST/Serverless endpoint URL for inference."
+        },
+        "modelRepoId": {
+          "type": "string",
+          "description": "Model weight repository identifier."
+        },
+        "gpuTier": {
+          "type": "string",
+          "description": "Provisioned GPU hardware tier (e.g., 2x NVIDIA A100 80GB SXM)."
+        },
+        "quantization": {
+          "type": "string",
+          "description": "Weight quantization format (e.g., EXL2 6.0bpw, AWQ 4-bit, GGUF Q6_K)."
+        },
+        "weightMode": {
+          "type": "string",
+          "enum": ["ORTHOGONAL_ABLITERATED", "CUSTOM_LORA_WEIGHTED", "RAW_FOUNDATION_MERGE"],
+          "description": "Weight modification or abliteration architecture."
+        },
+        "abliterationLayerRange": {
+          "type": "string",
+          "description": "Transformer layers modified or adapter spec."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["RUNNING", "STOPPED", "WARMING_UP", "SCALING"],
+          "description": "Current lifecycle status of the deployed model."
+        },
+        "activeWorkers": {
+          "type": "integer",
+          "description": "Number of currently running GPU workers."
+        },
+        "maxWorkers": {
+          "type": "integer",
+          "description": "Maximum allowed autoscaling GPU workers."
+        },
+        "avgLatencyMs": {
+          "type": "integer",
+          "description": "Average first-token latency in milliseconds."
+        },
+        "vramUsedGb": {
+          "type": "integer",
+          "description": "Currently utilized GPU VRAM in gigabytes."
+        },
+        "vramTotalGb": {
+          "type": "integer",
+          "description": "Total allocated GPU VRAM capacity in gigabytes."
+        },
+        "gpuUtilizationPercent": {
+          "type": "integer",
+          "description": "Real-time GPU compute utilization percentage (0-100)."
+        },
+        "requestsPerMin": {
+          "type": "integer",
+          "description": "Current request throughput per minute."
+        },
+        "isSelected": {
+          "type": "boolean",
+          "description": "Whether this model is selected as the active target for live duplex voice conversations."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the model deployment was created (must use FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the model deployment was last updated (must use FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "name",
+        "provider",
+        "endpointUrl",
+        "modelRepoId",
+        "gpuTier",
+        "quantization",
+        "weightMode",
+        "abliterationLayerRange",
+        "status",
+        "activeWorkers",
+        "maxWorkers",
+        "avgLatencyMs",
+        "vramUsedGb",
+        "vramTotalGb",
+        "gpuUtilizationPercent",
+        "requestsPerMin",
+        "isSelected",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/deployed_models/{modelId}": {
+      "schema": {
+        "$ref": "#/entities/DeployedModel"
+      },
+      "description": "Per-user collection of deployed private cloud models managed in the Model Management Dashboard."
+    }
+  }
+}
